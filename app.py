@@ -435,16 +435,14 @@ def compute_result(entry):
     result = entry.get("result", "PENDING")
     if expired:
         strike = entry["strike"]
-        if current_spot and current_spot > 0:
+        # Use current spot or saved exit_spot — don't require option price (expired options have no quote)
+        spot_for_result = current_spot if (current_spot and current_spot > 0) else entry.get("exit_spot", 0)
+        if spot_for_result and spot_for_result > 0:
             if entry["type"] == "CALL":
-                itm = current_spot >= strike
+                itm = spot_for_result >= strike
             else:
-                itm = current_spot <= strike
-            if current_price is not None and current_price > 0:
-                result = "WIN" if itm else "EXPIRED_WORTHLESS"
-            elif entry_price > 0:
-                result = "EXPIRED_WORTHLESS"
-        result = result
+                itm = spot_for_result <= strike
+            result = "WIN" if itm else "EXPIRED_WORTHLESS"
 
     return {
         "current_price":  current_price,
@@ -583,9 +581,11 @@ def watchlist_refresh():
     for entry in wl:
         live = compute_result(entry)
         entry.update(live)
-        # persist result for expired contracts
+        # persist result + exit spot for expired contracts
         if live["expired"] and live["result"] != "PENDING":
             entry["result"] = live["result"]
+            if live.get("current_spot") and live["current_spot"] > 0 and not entry.get("exit_spot"):
+                entry["exit_spot"] = live["current_spot"]
         updated.append(entry)
     save_watchlist(updated)
     return jsonify(updated)
@@ -765,7 +765,7 @@ td.left { text-align: left; }
 .empty-sub { font-size: 13px; line-height: 1.7; }
 
 /* ── Watchlist ── */
-.wl-toolbar { padding: 12px 24px; display: flex; gap: 8px; align-items: center; border-bottom: 1px solid var(--border); background: var(--surf); }
+.wl-toolbar { padding: 12px 24px; display: flex; gap: 8px; align-items: center; border-bottom: 1px solid var(--border); background: var(--surf); flex-wrap: wrap; }
 .wl-wrap { padding: 0; overflow-x: auto; }
 .result-win  { color: var(--green); font-weight: 700; }
 .result-loss { color: var(--red); font-weight: 700; }
@@ -773,8 +773,37 @@ td.left { text-align: left; }
 .result-expired { color: var(--muted2); }
 .pnl-pos { color: var(--green); font-weight: 700; }
 .pnl-neg { color: var(--red); font-weight: 700; }
-.note-input { background: var(--surf2); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 5px; font-size: 11px; width: 170px; outline: none; }
+.note-input { background: var(--surf2); border: 1px solid var(--border); color: var(--text); padding: 4px 8px; border-radius: 5px; font-size: 11px; width: 100%; outline: none; }
 .note-input:focus { border-color: var(--cyan); }
+
+/* ── Watchlist Cards ── */
+.wl-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 16px; padding: 20px 24px; }
+.wl-card { background: var(--surf); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; transition: border-color .15s; }
+.wl-card:hover { border-color: var(--muted2); }
+.wl-card.card-win  { border-left: 3px solid var(--green); }
+.wl-card.card-loss { border-left: 3px solid var(--red); }
+.wl-card.card-pending { border-left: 3px solid var(--yellow); }
+.wl-card.card-expired { border-left: 3px solid var(--muted2); }
+.card-header { padding: 12px 14px 10px; display: flex; align-items: flex-start; justify-content: space-between; border-bottom: 1px solid var(--border); }
+.card-ticker { font-size: 18px; font-weight: 800; color: var(--cyan); cursor: pointer; }
+.card-ticker:hover { text-decoration: underline; }
+.card-meta { font-size: 11px; color: var(--muted2); margin-top: 2px; }
+.card-outcome { text-align: right; }
+.outcome-badge { display: inline-block; padding: 5px 10px; border-radius: 6px; font-size: 12px; font-weight: 700; letter-spacing: .3px; }
+.outcome-win  { background: rgba(55,197,97,.15); color: var(--green); border: 1px solid rgba(55,197,97,.3); }
+.outcome-loss { background: rgba(240,83,74,.15); color: var(--red); border: 1px solid rgba(240,83,74,.3); }
+.outcome-pending { background: rgba(224,160,32,.12); color: var(--yellow); border: 1px solid rgba(224,160,32,.25); }
+.outcome-expired { background: var(--surf2); color: var(--muted2); border: 1px solid var(--border); }
+.card-body { padding: 12px 14px; }
+.card-snapshot { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+.snap-item { background: var(--surf2); border-radius: 6px; padding: 7px 9px; }
+.snap-label { font-size: 10px; color: var(--muted2); text-transform: uppercase; letter-spacing: .4px; margin-bottom: 2px; }
+.snap-val { font-size: 13px; font-weight: 600; color: var(--text); }
+.card-pnl { display: flex; gap: 10px; align-items: center; padding: 8px 10px; background: var(--surf2); border-radius: 6px; margin-bottom: 10px; font-size: 13px; }
+.card-footer { padding: 0 14px 12px; display: flex; gap: 8px; align-items: center; }
+.wl-view-toggle { display: flex; gap: 4px; margin-left: auto; }
+.view-btn { background: var(--surf2); border: 1px solid var(--border); color: var(--muted2); padding: 4px 10px; border-radius: 5px; font-size: 11px; cursor: pointer; }
+.view-btn.active { background: var(--surf3); border-color: var(--cyan); color: var(--cyan); }
 
 /* ── Sort indicators ── */
 .sort-desc::after { content: " ↓"; color: var(--cyan); font-size: 10px; }
@@ -963,6 +992,11 @@ td.left { text-align: left; }
   <div class="wl-toolbar">
     <button class="btn btn-primary" onclick="refreshWatchlist()">↻ &nbsp;Refresh Prices</button>
     <span id="wl-status" style="color:var(--muted2);font-size:11px"></span>
+    <span id="wl-stats" style="display:none;font-size:12px;display:flex;gap:10px;align-items:center"></span>
+    <div class="wl-view-toggle">
+      <button class="view-btn active" id="btn-cards" onclick="setWlView('cards')">⊞ Cards</button>
+      <button class="view-btn" id="btn-table" onclick="setWlView('table')">≡ Table</button>
+    </div>
   </div>
   <div class="wl-wrap">
     <div id="wl-empty" style="text-align:center;padding:70px;color:var(--muted2)">
@@ -970,6 +1004,9 @@ td.left { text-align: left; }
       <div style="font-size:16px;font-weight:600;color:var(--text);margin-bottom:8px">No tracked contracts</div>
       <div style="font-size:13px;line-height:1.7">Star contracts from the scanner to track their performance to expiration.</div>
     </div>
+    <!-- Cards view -->
+    <div id="wl-cards" style="display:none" class="wl-cards"></div>
+    <!-- Table view -->
     <table id="wl-table" style="display:none;width:100%;border-collapse:collapse;white-space:nowrap">
       <thead><tr>
         <th class="left">Ticker</th>
@@ -1396,23 +1433,132 @@ async function refreshWatchlist(){
   document.getElementById('wl-status').textContent='Updated '+new Date().toLocaleTimeString();
 }
 
+let wlView='cards';
+let wlData=[];
+
+function setWlView(v){
+  wlView=v;
+  document.getElementById('btn-cards').classList.toggle('active',v==='cards');
+  document.getElementById('btn-table').classList.toggle('active',v==='table');
+  document.getElementById('wl-cards').style.display=v==='cards'&&wlData.length?'':'none';
+  document.getElementById('wl-table').style.display=v==='table'&&wlData.length?'':'none';
+}
+
 function renderWatchlist(wl){
+  wlData=wl;
   document.getElementById('wl-badge').style.display=wl.length?'':'none';
   document.getElementById('wl-badge').textContent=wl.length;
   if(!wl.length){
+    document.getElementById('wl-cards').style.display='none';
     document.getElementById('wl-table').style.display='none';
     document.getElementById('wl-empty').style.display='';
+    document.getElementById('wl-stats').style.display='none';
     return;
   }
   document.getElementById('wl-empty').style.display='none';
-  document.getElementById('wl-table').style.display='';
 
+  // Stats summary bar
+  const wins=wl.filter(e=>e.result==='WIN').length;
+  const losses=wl.filter(e=>e.result==='EXPIRED_WORTHLESS').length;
+  const pending=wl.filter(e=>!e.result||e.result==='PENDING').length;
+  const closed=wins+losses;
+  const winRate=closed>0?Math.round(wins/closed*100):null;
+  const statsEl=document.getElementById('wl-stats');
+  statsEl.style.display='flex';
+  statsEl.innerHTML=
+    `<span style="color:var(--green);font-weight:700">${wins} WIN${wins!==1?'S':''}</span>`+
+    `<span style="color:var(--muted2)">·</span>`+
+    `<span style="color:var(--red);font-weight:700">${losses} LOSS${losses!==1?'ES':''}</span>`+
+    `<span style="color:var(--muted2)">·</span>`+
+    `<span style="color:var(--yellow)">${pending} PENDING</span>`+
+    (winRate!==null?`<span style="color:var(--muted2)">·</span><span style="color:var(--cyan);font-weight:700">${winRate}% ITM rate</span>`:'');
+
+  // ── Build card data ──────────────────────────────────────
+  const cardHtml=wl.map(e=>{
+    const daysLeft=e.days_left!=null?e.days_left:dte(e.expiration);
+    const expired=daysLeft<0;
+    const r=e.result||'PENDING';
+
+    // Card color class
+    let cardCls='card-pending';
+    if(r==='WIN') cardCls='card-win';
+    else if(r==='EXPIRED_WORTHLESS') cardCls='card-loss';
+    else if(expired) cardCls='card-expired';
+
+    // Outcome badge
+    let badge='';
+    if(r==='WIN'){
+      const exitTxt=e.exit_spot?` · stock $${e.exit_spot.toFixed(2)}`:'';
+      badge=`<span class="outcome-badge outcome-win">✓ IN THE MONEY${exitTxt}</span>`;
+    } else if(r==='EXPIRED_WORTHLESS'){
+      const exitTxt=e.exit_spot?` · stock $${e.exit_spot.toFixed(2)}`:'';
+      badge=`<span class="outcome-badge outcome-loss">✗ EXPIRED OUT OF THE MONEY${exitTxt}</span>`;
+    } else if(expired){
+      badge=`<span class="outcome-badge outcome-expired">EXPIRED · hit Refresh</span>`;
+    } else {
+      badge=`<span class="outcome-badge outcome-pending">${daysLeft}d until expiry</span>`;
+    }
+
+    // P&L line
+    let pnlLine='';
+    if(e.pnl_dollar!=null){
+      const dcls=e.pnl_dollar>=0?'pnl-pos':'pnl-neg';
+      const pcls=e.pnl_pct!=null?(e.pnl_pct>=0?'pnl-pos':'pnl-neg'):'';
+      const pctTxt=e.pnl_pct!=null?` <span class="${pcls}">(${e.pnl_pct>=0?'+':''}${e.pnl_pct.toFixed(1)}%)</span>`:'';
+      pnlLine=`<div class="card-pnl">
+        <span style="color:var(--muted2);font-size:11px">P&amp;L / contract</span>
+        <span class="${dcls}" style="font-size:15px">${e.pnl_dollar>=0?'+':''}$${e.pnl_dollar.toFixed(0)}</span>${pctTxt}
+        ${e.current_price!=null?`<span style="color:var(--muted2);font-size:11px;margin-left:auto">cur $${e.current_price.toFixed(2)}</span>`:''}
+      </div>`;
+    }
+
+    // Current moneyness
+    const mnow=e.moneyness_now||'';
+    const mnowHtml=mnow?`<span class="${mc(mnow)}" style="font-size:11px">${mnow}</span> · `:'';
+
+    const typeColor=e.type==='CALL'?'var(--green)':'var(--red)';
+    const typeArrow=e.type==='CALL'?'▲':'▼';
+    const starredDate=e.starred_at?e.starred_at.split('T')[0]:'';
+    const curSpotTxt=e.current_spot?` · now $${e.current_spot.toFixed(2)}`:'';
+
+    return `<div class="wl-card ${cardCls}">
+      <div class="card-header">
+        <div>
+          <div style="display:flex;align-items:center;gap:8px">
+            <span class="card-ticker" onclick="openTickerModal('${e.ticker}')">${e.ticker}</span>
+            <span style="color:${typeColor};font-weight:700;font-size:13px">${typeArrow} ${e.type}</span>
+            <span style="color:var(--text);font-size:13px">$${e.strike.toFixed(1)} strike</span>
+          </div>
+          <div class="card-meta">exp ${e.expiration} · added ${starredDate}${curSpotTxt}</div>
+        </div>
+        <div class="card-outcome">${badge}</div>
+      </div>
+      <div class="card-body">
+        <div style="font-size:10px;color:var(--muted2);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Entry Snapshot</div>
+        <div class="card-snapshot">
+          <div class="snap-item"><div class="snap-label">Option Price</div><div class="snap-val">$${(e.entry_price||0).toFixed(2)}</div></div>
+          <div class="snap-item"><div class="snap-label">Stock Price</div><div class="snap-val">$${(e.entry_spot||0).toFixed(2)}</div></div>
+          <div class="snap-item"><div class="snap-label">Score</div><div class="snap-val">${scoreBadge(e.entry_score||0)}</div></div>
+          <div class="snap-item"><div class="snap-label">Vol / OI</div><div class="snap-val">${(e.entry_vol_oi||0).toFixed(1)}x</div></div>
+          <div class="snap-item"><div class="snap-label">IV</div><div class="snap-val">${((e.entry_iv||0)*100).toFixed(0)}%</div></div>
+          <div class="snap-item"><div class="snap-label">Premium</div><div class="snap-val">${e.entry_premium>=1e6?'$'+(e.entry_premium/1e6).toFixed(1)+'M':e.entry_premium>=1e3?'$'+(e.entry_premium/1e3).toFixed(0)+'K':'$'+(e.entry_premium||0).toFixed(0)}</div></div>
+        </div>
+        ${pnlLine}
+        <div class="card-footer">
+          <input class="note-input" value="${(e.notes||'').replace(/"/g,'&quot;')}" placeholder="add notes…" onblur="saveNote('${e.id}',this.value)">
+          <button class="btn btn-ghost btn-sm" onclick="removeFromWL('${e.id}')" style="flex-shrink:0">✕ Remove</button>
+        </div>
+      </div>
+    </div>`;
+  }).join('');
+  document.getElementById('wl-cards').innerHTML=cardHtml;
+
+  // ── Build table rows ─────────────────────────────────────
   document.getElementById('wl-tbody').innerHTML=wl.map(e=>{
     const daysLeft=e.days_left!=null?e.days_left:dte(e.expiration);
     const expired=daysLeft<0;
     const typeTag=e.type==='CALL'?'<span class="call">▲ CALL</span>':'<span class="put">▼ PUT</span>';
 
-    // P&L
     let pnlHtml='<span style="color:var(--muted)">—</span>';
     if(e.pnl_dollar!=null){
       const cls=e.pnl_dollar>=0?'pnl-pos':'pnl-neg';
@@ -1424,23 +1570,29 @@ function renderWatchlist(wl){
       pnlPctHtml=`<span class="${cls}">${e.pnl_pct>=0?'+':''}${e.pnl_pct.toFixed(1)}%</span>`;
     }
 
-    // Result badge
-    let resultHtml;
     const r=e.result||'PENDING';
-    if(r==='WIN')            resultHtml='<span class="result-win">✓ WIN</span>';
-    else if(r==='EXPIRED_WORTHLESS') resultHtml='<span class="result-loss">✗ WORTHLESS</span>';
-    else if(expired)         resultHtml='<span class="result-expired">EXPIRED</span>';
-    else                     resultHtml=`<span class="result-pending">${daysLeft}d left</span>`;
+    let resultHtml;
+    if(r==='WIN'){
+      const exitInfo=e.exit_spot?` @ $${e.exit_spot.toFixed(2)}`:'';
+      resultHtml=`<span class="result-win">✓ ITM${exitInfo}</span>`;
+    } else if(r==='EXPIRED_WORTHLESS'){
+      const exitInfo=e.exit_spot?` @ $${e.exit_spot.toFixed(2)}`:'';
+      resultHtml=`<span class="result-loss">✗ OTM${exitInfo}</span>`;
+    } else if(expired){
+      resultHtml='<span class="result-expired">EXPIRED (refresh)</span>';
+    } else {
+      resultHtml=`<span class="result-pending">${daysLeft}d left</span>`;
+    }
 
+    const mnow=e.moneyness_now||'—';
     const curPrice=e.current_price!=null?'$'+e.current_price.toFixed(2):'<span style="color:var(--muted)">—</span>';
     const curSpot=e.current_spot?'$'+e.current_spot.toFixed(2):'<span style="color:var(--muted)">—</span>';
-    const mnow=e.moneyness_now||'—';
-    const mClass=mc(mnow);
     const starredDate=e.starred_at?e.starred_at.split('T')[0]:'';
 
     return `<tr>
-      <td class="left"><span class="tkr" style="cursor:pointer;text-decoration:underline dotted" onclick="openTickerModal('${e.ticker}')" title="View chart & stats">${e.ticker}</span><br><span style="color:var(--muted);font-size:10px">${starredDate}</span></td>
+      <td class="left"><span class="tkr" style="cursor:pointer;text-decoration:underline dotted" onclick="openTickerModal('${e.ticker}')">${e.ticker}</span><br><span style="color:var(--muted);font-size:10px">${starredDate}</span></td>
       <td class="left">${typeTag}</td>
+      <td class="left ${mc(mnow)}">${mnow}</td>
       <td class="left">$${e.strike.toFixed(1)}</td>
       <td class="left">${e.expiration}</td>
       <td>${expired?'<span style="color:var(--muted)">EXP</span>':daysLeft+'d'}</td>
@@ -1448,17 +1600,19 @@ function renderWatchlist(wl){
       <td>$${(e.entry_spot||0).toFixed(2)}</td>
       <td>${curPrice}</td>
       <td>${curSpot}</td>
-      <td class="${mClass}">${mnow}</td>
       <td>${pnlHtml}</td>
       <td>${pnlPctHtml}</td>
       <td>${scoreBadge(e.entry_score||0)}</td>
       <td>${(e.entry_vol_oi||0).toFixed(2)}x</td>
       <td>${((e.entry_iv||0)*100).toFixed(0)}%</td>
       <td>${resultHtml}</td>
-      <td class="left"><input class="note-input" value="${e.notes||''}" placeholder="add notes…" onblur="saveNote('${e.id}',this.value)"></td>
+      <td class="left"><input class="note-input" value="${(e.notes||'').replace(/"/g,'&quot;')}" placeholder="add notes…" onblur="saveNote('${e.id}',this.value)"></td>
       <td><button class="btn btn-ghost btn-sm" onclick="removeFromWL('${e.id}')">✕</button></td>
     </tr>`;
   }).join('');
+
+  // Show correct view
+  setWlView(wlView);
 }
 
 function dte(exp){
