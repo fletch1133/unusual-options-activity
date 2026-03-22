@@ -400,6 +400,10 @@ def fetch_current_option_price(ticker, opt_type, strike, expiration):
     try:
         stock = yf.Ticker(ticker)
         spot = stock.fast_info.get("last_price") or stock.fast_info.get("regularMarketPrice") or 0
+    except Exception:
+        return None, 0, None
+
+    try:
         chain = stock.option_chain(expiration)
         df = chain.calls if opt_type == "CALL" else chain.puts
         df = df[df["strike"] == strike]
@@ -410,7 +414,8 @@ def fetch_current_option_price(ticker, opt_type, strike, expiration):
         iv    = float(row.get("impliedVolatility", 0) or 0)
         return price, spot, iv
     except Exception:
-        return None, 0, None
+        # Option chain unavailable (e.g. expired date) — still return spot so ITM/OTM can be determined
+        return None, spot, None
 
 
 def compute_result(entry):
