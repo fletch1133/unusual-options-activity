@@ -400,6 +400,10 @@ def fetch_current_option_price(ticker, opt_type, strike, expiration):
     try:
         stock = yf.Ticker(ticker)
         spot = stock.fast_info.get("last_price") or stock.fast_info.get("regularMarketPrice") or 0
+        if not spot:
+            h = stock.history(period="2d")
+            if not h.empty:
+                spot = float(h["Close"].iloc[-1])
     except Exception:
         return None, 0, None
 
